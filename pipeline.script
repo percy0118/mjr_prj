@@ -1,0 +1,105 @@
+pipeline {
+    agent any
+
+    environment {
+        EXECUTION_ENV = "prod"
+        FILE_RUN_LIMIT = 2
+        // FILE_EXT = ""
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        ansiColor('xterm')
+    }
+
+    parameters {
+        file(name: 'FILE_1', description: 'ML_model')
+        file(name: 'FILE_2', description: 'Original_data')
+        file(name: 'FILE_3', description: 'New_data')
+    }
+
+    stages {
+
+        stage('Initialize Job Context') {
+            steps {
+                echo "Initializing pipeline with ENV=${EXECUTION_ENV}"
+                script {
+                    def buildId = UUID.randomUUID().toString()
+                    env.BUILD_CONTEXT = buildId
+                    echo "Build Context ID: ${buildId}"
+                }
+            }
+        }
+
+        stage('Fetch Secrets and Tokens') {
+            steps {
+                echo "credentials lookup..."
+                withCredentials([string(credentialsId: 'dummy-secret', variable: 'SECRET')]) {
+                    echo "Fetched credentials"
+                }
+            }
+        }
+
+        stage('Pre-Execution Checks') {
+            steps {
+                echo "Performing pre-flight checks"
+                script {
+                    def os = sh(script: 'uname', returnStdout: true).trim()
+                    echo "Detected OS: ${os}"
+                    if (os != 'Linux') {
+                        error "Unsupported OS: ${os}"
+                    }
+                }
+            }
+        }
+
+        stage('Stage Uploaded Files') {
+            steps {
+                echo "Staging uploaded files into workspace..."
+                script {
+                    writeFile file: 'mlModel', text: params.FILE_1.readToString()
+                    writeFile file: 'orgData', text: params.FILE_2.readToString()
+                    writeFile file: 'newData', text: params.FILE_3.readToString()
+                    // sh 'chmod +x script*.sh'
+                }
+            }
+        }
+
+        stage('Static Analysis (Mocked)') {
+            steps {
+                echo "Analyzing uploaded scripts for security and compliance..."
+                sleep time: 2, unit: 'SECONDS'
+                echo "No issues found in scripts (mocked)"
+            }
+        }
+
+        stage('Execution Workflow') {
+            steps {
+                echo "Starting script execution sequence..."
+                script {
+                    def filesToRun = ['Drift_detection.py', 'Retraining.py']
+                    for (int i = 0; i < FILE_RUN_LIMIT.toInteger(); i++) {
+                        echo "Executing file: ${filesToRun[i]}"
+                        bash "python ${filesToRun[i]}"
+                    }
+                }
+            }
+        }
+
+        stage('Post-Execution Metrics') {
+            steps {
+                echo "Collecting and uploading metrics..."
+                sleep time: 1, unit: 'SECONDS'
+                echo "Execution completed"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Cleaning up build context: ${env.BUILD_CONTEXT}"
+            deleteDir()
+        }
+    }
+}
