@@ -11,7 +11,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 
-df = pd.read_csv('data/data.csv')
+df = pd.read_csv('data.csv')
 X = df.drop('Outcome', axis=1)
 y = df['Outcome']
 

@@ -8,7 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 import pickle
 
-df = pd.read_csv('data/data.csv')
+df = pd.read_csv('data.csv')
 X = df.drop('Outcome', axis=1)
 y = df['Outcome']
 
