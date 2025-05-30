@@ -1,0 +1,205 @@
+pipeline {
+    agent any
+
+    environment {
+        VENV_DIR   = "${env.WORKSPACE}/venv"
+        PYTHON_BIN = "\"${env.WORKSPACE}/venv/bin/python\""
+        DATA_PATH  = "/var/lib/jenkins/data"
+        REPORT_DIR = "${env.WORKSPACE}/mjr_prj/reports"
+    }
+
+    stages {
+
+        stage('Clone Scripts') {
+            steps {
+                sh '''
+                    rm -rf mjr_prj
+                    git clone https://github.com/percy0118/mjr_prj
+                '''
+            }
+        }
+
+        stage('Set Up Virtual Environment') {
+            steps {
+                sh '''
+                    python3 -m venv "venv"
+                    "./venv/bin/pip" install --upgrade pip
+                    "./venv/bin/pip" install -r "mjr_prj/requirements.txt"
+                '''
+            }
+        }
+
+        stage('Copy Artifacts from Local Storage') {
+            steps {
+                echo "[📦 STAGING] Copying model and CSVs from local paths..."
+                sh '''
+                    cp "${DATA_PATH}/model_pkl" model.pkl
+                    cp "${DATA_PATH}/reference_data.csv" reference_data.csv
+                    cp "${DATA_PATH}/new_data.csv" new_data.csv
+                '''
+            }
+        }
+
+        stage('Run Drift Detector') {
+            steps {
+                sh """
+                    cp new_data.csv data.csv
+                    ${PYTHON_BIN} mjr_prj/drift_detection.py
+                """
+                sh "ls -l"
+            }
+        }
+
+        stage('Parse Drift Decision') {
+            steps {
+                script {
+                    def driftStatus = sh (
+                        script: """
+                            ${PYTHON_BIN} -c '
+import json
+with open("drift_flag.json") as f:
+    print(json.load(f)["drift_detected"])
+                            '
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    env.DRIFT_DETECTED = driftStatus
+                    echo "📢 Drift Detected? => ${env.DRIFT_DETECTED}"
+                }
+            }
+        }
+
+        stage('Retrain Model if Drifted') {
+            when {
+                expression { return env.DRIFT_DETECTED == 'True' }
+            }
+            steps {
+                sh """
+                    cp mjr_prj/data1.csv data1.csv
+                    ls -l
+                    ${PYTHON_BIN} mjr_prj/retraining.py
+                """
+                script {
+                    env.RETRAIN_STATUS = "✅ Retraining was triggered due to detected drift."
+                }
+            }
+        }
+
+        stage('Skip Retraining if No Drift') {
+            when {
+                expression { return env.DRIFT_DETECTED != 'True' }
+            }
+            steps {
+                script {
+                    env.RETRAIN_STATUS = "ℹ️ No retraining needed. No drift detected."
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                sh '''
+                    mkdir -p archive
+                    mv model.pkl archive/model_$(date +%Y%m%d%H%M%S).pkl || true
+                    mv mjr_prj/reports/*.html archive/ || true
+                '''
+                archiveArtifacts artifacts: 'archive/**', fingerprint: true
+            }
+        }
+
+        stage('Send Outlook Notification Email') {
+            steps {
+                script {
+                    def reportFile = sh(
+                        script: "ls archive/*data_drift_report_*.html | head -n 1 || true",
+                        returnStdout: true
+                    ).trim()
+
+                    env.REPORT_FILE = reportFile
+
+                    emailext(
+                        subject: "🔔 ML Drift Detection Pipeline - Build #${env.BUILD_NUMBER}",
+                        body: """
+Hello,
+
+Your ML pipeline has completed.
+
+<b>Drift Detected:</b> ${env.DRIFT_DETECTED}<br/>
+${env.RETRAIN_STATUS}<br/>
+
+The full drift report is attached as an HTML file.
+
+Regards,<br/>
+Jenkins via Outlook
+                        """,
+                        From:'JENKINS',
+                        to: 'pramodm.ec21@rvce.edu.in, rushilskumar.ec21@rvce.edu.in,namithgg.ec21@rvce.edu.in',
+                        attachLog: true,
+                        attachmentsPattern: "${reportFile}"
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "[✅ DONE] Moving workspace contents to archive folder..."
+            script {
+                def archiveDir = "build_archive/build_${env.BUILD_NUMBER}"
+                sh """
+                    mkdir -p ${archiveDir}
+                    mv * ${archiveDir}/ || true
+                    mv .[^.]* ${archiveDir}/ || true
+                """
+                echo "[📦 MOVED] Workspace files moved to: ${archiveDir}"
+            }
+        }
+
+        success {
+            echo "[🎉 SUCCESS] Pipeline completed successfully."
+            script {
+                emailext(
+                    subject: "✅ Drift Detection Pipeline SUCCESS - Build #${env.BUILD_NUMBER}",
+                    body: """
+Hello,
+
+The Jenkins pipeline completed **successfully**.
+
+<b>Drift Detected:</b> ${env.DRIFT_DETECTED}<br/>
+${env.RETRAIN_STATUS}<br/>
+
+Regards,<br/>
+Jenkins
+                    """,
+                    From:'JENKINS',
+                    to: 'pramodm.ec21@rvce.edu.in, rushilskumar.ec21@rvce.edu.in,namithgg.ec21@rvce.edu.in',
+                    attachLog: true,
+                    attachmentsPattern: "${env.REPORT_FILE ?: ''}"
+                )
+            }
+        }
+
+        failure {
+            echo "[❌ FAILURE] One or more stages failed. Check logs above."
+            script {
+                emailext(
+                    subject: "❌ Drift Detection Pipeline FAILED - Build #${env.BUILD_NUMBER}",
+                    body: """
+Hello,
+
+⚠️ The Jenkins pipeline failed. Please review the logs.
+
+<b>Drift Detected:</b> ${env.DRIFT_DETECTED ?: 'Unknown'}<br/>
+
+Regards,<br/>
+Jenkins
+                    """,
+                    From:'JENKINS',
+                    to: 'pramodm.ec21@rvce.edu.in, rushilskumar.ec21@rvce.edu.in,namithgg.ec21@rvce.edu.in',
+                    attachLog: true
+                )
+            }
+        }
+    }
+}
