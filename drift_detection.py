@@ -73,5 +73,5 @@ report_json = data_drift_report.as_dict()
 drift_detected = report_json['metrics'][0]['result']['dataset_drift']
 
 print(drift_detected)
-with open("drift_flag.json", "w") as f:
+with open("../drift_flag.json", "w") as f:
     json.dump({"drift_detected": True}, f)
