@@ -8,7 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 import pickle
 
-df = pd.read_csv('data.csv')
+df = pd.read_csv('data1.csv')
 X = df.drop('Outcome', axis=1)
 y = df['Outcome']
 
@@ -42,7 +42,7 @@ pipeline = Pipeline(steps=[
 pipeline.fit(X_train, y_train)
 
 # create an iterator object with write permission - model.pkl
-with open('model_pkl', 'wb') as files:
+with open('model_pkl_new', 'wb') as files:
     pickle.dump(pipeline, files)
 
 #'wb') as f:
